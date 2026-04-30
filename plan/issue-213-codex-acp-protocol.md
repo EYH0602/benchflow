@@ -18,9 +18,15 @@
    for the `openai` provider.
 
 In practice the misconfiguration is inert for the default OpenAI flow
-(`find_provider` returns `None`, the broken branches never fire), but it
-silently misroutes if anyone pairs codex-acp with a multi-endpoint provider
-(zai), and it misleads readers about what codex-acp can do.
+(`find_provider` returns `None`, the broken branches never fire). It also
+cannot work for the only multi-endpoint provider currently in the registry
+(zai): zai exposes anthropic-messages and openai chat-completions endpoints,
+neither of which Codex CLI can speak (chat-completions was removed upstream,
+Responses-only). So the zai+codex-acp routing path that
+`tests/test_resolve_env_helpers.py:145` exercises is plumbing for a
+physically-impossible integration — env vars get set "correctly" but the
+underlying codex process cannot connect. The label is also misleading about
+what codex-acp can do.
 
 `codex-acp` is a thin shim that exists solely to wrap OpenAI's Codex CLI. It
 has exactly one valid backend (OpenAI Responses API). There is no protocol
@@ -30,8 +36,10 @@ negotiation to express.
 
 Minimal, honest change in `src/benchflow/agents/registry.py:279-312`:
 
-- `api_protocol="openai-completions"` → `api_protocol=""`.
-  Empty matches reality: single-target agent, no multi-endpoint routing.
+- `api_protocol="openai-completions"` → `api_protocol=""`. Empty matches
+  reality: single-target agent, no multi-endpoint routing. Add a short
+  comment in the same style as the `gemini` agent at `registry.py:326-329`
+  explaining why it's intentionally empty (folds in former follow-up #3).
 - Remove the `env_mapping` block entirely. `BENCHFLOW_PROVIDER_BASE_URL` and
   `BENCHFLOW_PROVIDER_API_KEY` translation does nothing useful for codex-acp
   today — Codex ignores `OPENAI_BASE_URL`, and `OPENAI_API_KEY` is already
@@ -39,6 +47,9 @@ Minimal, honest change in `src/benchflow/agents/registry.py:279-312`:
 - Keep `requires_env=["OPENAI_API_KEY"]`, `credential_files`,
   `subscription_auth`, and `disallow_web_tools_launch_suffix` unchanged —
   those are correct.
+- Add `"codex-acp"` to the `no_env_mapping` set in
+  `tests/test_registry_invariants.py:128` so the negative invariant is
+  sticky (prevents accidental re-add).
 
 Net diff is roughly:
 
@@ -71,20 +82,31 @@ Net diff is roughly:
 
 ## Verification
 
-1. `tests/test_registry_invariants.py` — should pass without modification.
+1. `tests/test_registry_invariants.py` — passes without modification.
    `test_agent_field_shapes` accepts empty `api_protocol`
    (line 31: `VALID_API_PROTOCOLS = {"", "anthropic-messages", "openai-completions"}`).
    `test_agent_api_protocol_has_provider_endpoint` (line 144) skips agents
    with empty `api_protocol`.
-2. `tests/test_registry_invariants.py::test_agent_negative_config_invariants`
-   does not list codex-acp under `no_env_mapping`. Removing env_mapping is
-   still allowed; if we want to make it sticky, append `"codex-acp"` to that
-   set in a follow-up.
-3. Run the full suite: `.venv/bin/python -m pytest tests/`.
-4. Type and lint: `.venv/bin/ty check src/` and `ruff check .`.
-5. Spot check: any test that asserts on codex-acp's `env_mapping` will need
-   updating. Likely candidates in `tests/test_agent_registry.py` or
-   `tests/test_providers.py` — check before committing.
+2. **Tests that break and need updating** (load-bearing — both must be
+   handled in the same PR or CI fails):
+   - `tests/test_agent_registry.py::test_codex_acp_has_mapping`
+     (line 27-30) — delete; env_mapping is now empty by design.
+   - `tests/test_resolve_env_helpers.py::test_zai_picks_openai_endpoint_for_codex_agent`
+     (line 145-151) — delete. The integration it asserts (codex-acp routing
+     to zai's openai endpoint) cannot work end-to-end: zai's openai endpoint
+     speaks chat-completions, which Codex CLI no longer supports
+     (`CHAT_WIRE_API_REMOVED_ERROR`). The test was pinning env-var shape for
+     a physically impossible integration.
+3. **Add regression test naming this PR/issue** (per CLAUDE.md regression
+   rule). Suggested home: `tests/test_agent_registry.py`. Asserts:
+   - `AGENTS["codex-acp"].api_protocol == ""`
+   - `AGENTS["codex-acp"].env_mapping == {}`
+   Docstring must reference issue #213 and the upstream
+   `CHAT_WIRE_API_REMOVED_ERROR` reason. The negative invariant added to
+   `no_env_mapping` (see Fix above) covers env_mapping; this test pins the
+   protocol label too.
+4. Run the full suite: `.venv/bin/python -m pytest tests/`.
+5. Type and lint: `.venv/bin/ty check src/` and `ruff check .`.
 
 ## Follow-ups (separate issues / PRs)
 
@@ -96,5 +118,20 @@ Net diff is roughly:
   `-c openai_base_url=... -c model=...` (or `-c model_providers.X=... -c model_provider=X`)
   before exec'ing `codex-acp`. Add `"openai-responses"` to the protocol
   enum at that point.
-- Consider documenting in `registry.py:279` that codex-acp is intentionally
-  single-backend and does not honor `BENCHFLOW_PROVIDER_*` env vars.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | not run (small config fix, no scope question) |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | not run |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR (PLAN) | 1 issue surfaced + resolved (option A): `test_resolve_env_helpers.py:145` was missed by original verification list; plan now lists both load-bearing tests to delete and adds a PR-#213-named regression test |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | N/A (no UI) |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | not run |
+
+**UNRESOLVED:** 0
+**VERDICT:** ENG CLEARED — ready to implement. zai+codex-acp is a
+physically impossible integration (chat-completions removed upstream;
+zai has no Responses endpoint), so deleting
+`test_zai_picks_openai_endpoint_for_codex_agent` is correct and not a
+regression.
