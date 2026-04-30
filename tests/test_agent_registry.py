@@ -24,10 +24,17 @@ class TestEnvMappingField:
         cfg = AGENTS["pi-acp"]
         assert cfg.env_mapping == {}
 
-    def test_codex_acp_has_mapping(self):
+    def test_codex_acp_no_static_mapping(self):
+        """Guards issue #213: codex-acp speaks only the OpenAI Responses API.
+
+        Codex CLI removed chat-completions support upstream
+        (CHAT_WIRE_API_REMOVED_ERROR, openai/codex#7782) and ignores
+        OPENAI_BASE_URL anyway (config is read from TOML / -c overrides).
+        api_protocol must be empty and env_mapping must be {}.
+        """
         cfg = AGENTS["codex-acp"]
-        assert cfg.env_mapping["BENCHFLOW_PROVIDER_BASE_URL"] == "OPENAI_BASE_URL"
-        assert cfg.env_mapping["BENCHFLOW_PROVIDER_API_KEY"] == "OPENAI_API_KEY"
+        assert cfg.api_protocol == ""
+        assert cfg.env_mapping == {}
 
     def test_gemini_has_mapping(self):
         cfg = AGENTS["gemini"]

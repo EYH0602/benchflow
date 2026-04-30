@@ -289,11 +289,12 @@ AGENTS: dict[str, AgentConfig] = {
         launch_cmd="codex-acp",
         protocol="acp",
         requires_env=["OPENAI_API_KEY"],
-        api_protocol="openai-completions",
-        env_mapping={
-            "BENCHFLOW_PROVIDER_BASE_URL": "OPENAI_BASE_URL",
-            "BENCHFLOW_PROVIDER_API_KEY": "OPENAI_API_KEY",
-        },
+        # api_protocol intentionally empty: codex-acp wraps OpenAI's Codex CLI,
+        # which speaks only the OpenAI Responses API (chat-completions removed
+        # upstream — see CHAT_WIRE_API_REMOVED_ERROR / openai/codex#7782). It
+        # has exactly one valid backend, so there is no multi-endpoint routing
+        # to express. See issue #213.
+        api_protocol="",
         credential_files=[
             CredentialFile(
                 path="{home}/.codex/auth.json",
