@@ -370,6 +370,10 @@ AGENTS: dict[str, AgentConfig] = {
         # env_mapping intentionally empty — the launch wrapper handles
         # protocol-dependent translation (env vars for Anthropic,
         # models.json for OpenAI-compatible providers like vLLM).
+        # Model is chosen by pi-acp-launcher / models.json + --model, not via
+        # an ACP method — pi-acp has no session/set_model handler, so issuing
+        # it returns -32601.  Mirrors the openclaw/openhands precedent.
+        supports_acp_set_model=False,
     ),
     "openclaw": AgentConfig(
         name="openclaw",

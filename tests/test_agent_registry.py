@@ -35,6 +35,10 @@ class TestEnvMappingField:
         cfg = AGENTS["pi-acp"]
         assert cfg.env_mapping == {}
         assert cfg.acp_model_format == "registered-provider/model"
+        # Model is chosen by the launch wrapper / models.json, not via ACP.
+        # pi-acp has no session/set_model handler, so the flag must be False
+        # to avoid an ACP -32601 "Method not found" at connect.
+        assert cfg.supports_acp_set_model is False
 
     def test_codex_acp_has_mapping(self):
         cfg = AGENTS["codex-acp"]
